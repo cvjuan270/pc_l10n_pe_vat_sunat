@@ -1,6 +1,10 @@
 import requests
+import unicodedata
 from odoo import fields, api, models, _
 from odoo.exceptions import UserError
+
+# SUNAT responde con tildes inconsistentes en sus mensajes de error
+MENSAJE_SIN_INFORMACION = "no se encontro informacion"
 
 class ResPartner(models.Model):
     _inherit = 'res.partner'
@@ -39,6 +43,12 @@ class ResPartner(models.Model):
     def update_document(self):
         self._doc_number_change()
 
+    @staticmethod
+    def _normalizar_mensaje(mensaje):
+        sin_tildes = ''.join(c for c in unicodedata.normalize('NFKD', mensaje or '')
+                             if not unicodedata.combining(c))
+        return sin_tildes.strip().lower()
+
     # Función heredada del modulo base_address_city para colocar el zip correcto
     def _onchange_city_id(self):
         res = super(ResPartner, self)._onchange_city_id()
@@ -70,7 +80,7 @@ class ResPartner(models.Model):
         # consultamos el dni
         try:
             # realizamos la consulta a la api
-            result = requests.get(f'https://api.apis.net.pe/v1/dni?numero={numeroDNI}')
+            result = requests.get(f'https://api.apis.net.pe/v1/dni?numero={numeroDNI}', timeout=30)
             # convertimos el resultado a un diccionario
             if result.status_code == 404:
                 raise UserError(_('DNI not found.'))
@@ -103,7 +113,8 @@ class ResPartner(models.Model):
         arrResultado = list()
 
         nombreInicio = "<HEAD><TITLE>"
-        nombreFin = "</TITLE></HEAD>"
+        # SUNAT inyecta scripts entre </TITLE> y </HEAD>, no buscar ambos tags juntos
+        nombreFin = "</TITLE>"
         contenidoBusqueda = self.ExtraerContenidoEntreTagString(contenidoHTML, 0, nombreInicio, nombreFin)
         if (contenidoBusqueda == ".:: Pagina de Mensajes ::."):
             nombreInicio = "<p class=\"error\">"
@@ -227,7 +238,8 @@ class ResPartner(models.Model):
         arrResultado = list()
 
         nombreInicio = "<HEAD><TITLE>"
-        nombreFin = "</TITLE></HEAD>"
+        # SUNAT inyecta scripts entre </TITLE> y </HEAD>, no buscar ambos tags juntos
+        nombreFin = "</TITLE>"
         contenidoBusqueda = self.ExtraerContenidoEntreTagString(contenidoHTML, 0, nombreInicio, nombreFin)
         if (contenidoBusqueda == ".:: Pagina de Mensajes ::."):
             nombreInicio = "<p class=\"error\">"
@@ -271,7 +283,8 @@ class ResPartner(models.Model):
         arrResultado = list()
 
         nombreInicio = "<HEAD><TITLE>"
-        nombreFin = "</TITLE></HEAD>"
+        # SUNAT inyecta scripts entre </TITLE> y </HEAD>, no buscar ambos tags juntos
+        nombreFin = "</TITLE>"
         contenidoBusqueda = self.ExtraerContenidoEntreTagString(contenidoHTML, 0, nombreInicio, nombreFin)
         if (contenidoBusqueda == ".:: Pagina de Mensajes ::."):
             nombreInicio = "<p class=\"error\">"
@@ -283,7 +296,7 @@ class ResPartner(models.Model):
             nombreFin = "</p>"
             oEnSUNAT.TipoRespuesta = 3
             oEnSUNAT.MensajeRespuesta = self.ExtraerContenidoEntreTagString(contenidoHTML, 0, nombreInicio, nombreFin)
-            if oEnSUNAT.MensajeRespuesta == 'No se encontró información para locales anexos.':
+            if MENSAJE_SIN_INFORMACION in self._normalizar_mensaje(oEnSUNAT.MensajeRespuesta):
                 oEnSUNAT.TipoRespuesta = 1
         else:
             oEnSUNAT.TipoRespuesta = 2
@@ -332,13 +345,13 @@ class ResPartner(models.Model):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'
         }
         url = "https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/jcrS00Alias?accion=getRepLeg&desRuc=%s&nroRuc=%s&contexto=ti-it&modo=1&numRnd=%s" % (desRuc, numeroRUC, numeroRandom)
-        response = sesion.request("POST", url, headers=headers, data=payload, verify=True)
+        response = sesion.request("POST", url, headers=headers, data=payload, verify=True, timeout=30)
         contenidoHTML = response.text
         
 
         if(response.status_code == 200):
             oEnSUNAT = self.ObtenerDatosRepresentantesLegales(contenidoHTML)
-            if oEnSUNAT.TipoRespuesta == 1 or oEnSUNAT.MensajeRespuesta == 'No se encontro información para representantes legales.':
+            if oEnSUNAT.TipoRespuesta == 1 or MENSAJE_SIN_INFORMACION in self._normalizar_mensaje(oEnSUNAT.MensajeRespuesta):
                 if not self._origin:
                     self.child_ids = False
                 if oEnSUNAT.RepresentantesLesgales and self.is_company:
@@ -384,7 +397,7 @@ class ResPartner(models.Model):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'
         }
         url = "https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/jcrS00Alias?accion=consPorRuc&nroRuc=%s&contexto=ti-it&modo=1&numRnd=%s" % (numeroRUC, numeroRandom)
-        response = sesion.request("POST", url, headers=headers, data=payload, verify=True)
+        response = sesion.request("POST", url, headers=headers, data=payload, verify=True, timeout=30)
         contenidoHTML = response.text
         
 
@@ -475,7 +488,7 @@ class ResPartner(models.Model):
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36'
         }
         url = "https://e-consultaruc.sunat.gob.pe/cl-ti-itmrconsruc/jcrS00Alias?accion=getLocAnex&desRuc=%s&nroRuc=%s&contexto=ti-it&modo=1&numRnd=%s" % (desRuc, numeroRUC, numeroRandom)
-        response = sesion.request("POST", url, headers=headers, data=payload, verify=True)
+        response = sesion.request("POST", url, headers=headers, data=payload, verify=True, timeout=30)
         contenidoHTML = response.text
         
 
@@ -551,7 +564,7 @@ class ResPartner(models.Model):
             }
 
             sesion = requests.Session()
-            response = sesion.request("GET", urlInicial, headers=headers, data=payload, verify=True)
+            response = sesion.request("GET", urlInicial, headers=headers, data=payload, verify=True, timeout=30)
 
             if(response.status_code == 200):
                 payload={}
@@ -580,7 +593,7 @@ class ResPartner(models.Model):
                 consLocAnex = False
                 # Validamos que intente hasta 15 veces si el código de respuesta es 401 Unauthorized
                 while(nIntentos < 15 and codigoEstado == 401):
-                    response = sesion.request("POST", url, headers=headers, data=payload, verify=True)
+                    response = sesion.request("POST", url, headers=headers, data=payload, verify=True, timeout=30)
                     codigoEstado = response.status_code
                     contenidoHTML = response.text 
                     nIntentos = nIntentos + 1
@@ -617,9 +630,11 @@ class ResPartner(models.Model):
                     mensajeRespuesta = "Ocurrió un inconveniente1 (%s) al consultar el número ramdom del RUC %s.\r\nDetalle: %s" % (response.status_code, numeroRUC, contenidoHTML)                
                     raise UserError(mensajeRespuesta)
             else:
-                self.ConsultarRUC(numeroRUC)
+                raise UserError(_("No se pudo conectar con el portal de SUNAT (HTTP %s). Intente nuevamente.") % response.status_code)
+        except UserError:
+            raise
         except Exception as e:
-            raise UserError(e)
+            raise UserError(_("Error al consultar el RUC %s en SUNAT: %s") % (numeroRUC, e))
 
     def ExtraerContenidoEntreTagString(self, cadena, posicion, nombreInicio, nombreFin, sensitivo=False):
         respuesta = ""
